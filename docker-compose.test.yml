@@ -1,0 +1,115 @@
+name: cinema-project-test
+
+services:
+  booking_service:
+    build: ./booking-service
+    working_dir: /app/booking-service
+    volumes:
+      - .:/app
+    depends_on:
+      boocking_db:
+        condition: service_healthy
+      cinema_service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      PYTHONPATH: /app
+      BOOKING_SETTINGS__DB_URL: postgresql+asyncpg://postgres_boocking:test1234@boocking_db:5432/boockingdb_test
+      BOOKING_SETTINGS__DB_ECHO: "False"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/openapi.json')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  boocking_db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres_boocking
+      POSTGRES_PASSWORD: test1234
+      POSTGRES_DB: boockingdb_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_boocking -d boockingdb_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  cinema_service:
+    build: ./cinema-service
+    working_dir: /app/cinema-service
+    volumes:
+      - .:/app
+    depends_on:
+      cinema_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      PYTHONPATH: /app
+      CINEMA_SETTINGS__DB_URL: postgresql+asyncpg://postgres_cinema:test1234@cinema_db:5432/cinemadb_test
+      CINEMA_SETTINGS__DB_ECHO: "False"
+    networks:
+      default:
+        aliases:
+          - cinema-service
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/openapi.json')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  cinema_db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres_cinema
+      POSTGRES_PASSWORD: test1234
+      POSTGRES_DB: cinemadb_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_cinema -d cinemadb_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--notify-keyspace-events", "Ex"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  tests:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    working_dir: /app
+    volumes:
+      - .:/app
+    depends_on:
+      booking_service:
+        condition: service_healthy
+      cinema_service:
+        condition: service_healthy
+      boocking_db:
+        condition: service_healthy
+      cinema_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /app
+      BOOKING_BASE_URL: http://booking_service:8000
+      CINEMA_BASE_URL: http://cinema_service:8000
+      BOOKING_TEST_DB_URL: postgresql+asyncpg://postgres_boocking:test1234@boocking_db:5432/boockingdb_test
+      CINEMA_TEST_DB_URL: postgresql+asyncpg://postgres_cinema:test1234@cinema_db:5432/cinemadb_test
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    command: pytest -q tests
